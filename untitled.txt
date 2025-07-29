@@ -1,0 +1,20 @@
+C:\Users\user\Excel_tools_develop\Excel_tools_develop_v38 
+
+回憶一下你啱啱同我做緊程式 重溝 
+跟住 有啲程式碼出咗問題你喺度幫我跟進緊但係你當機 你而家去繼續返嚟未完成嘅工作 
+
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Users\user\anaconda3\Lib\tkinter\__init__.py", line 1968, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\user\Excel_tools_develop\Excel_tools_develop_v38\worksheet_ui.py", line 155, in <lambda>
+    self.summarize_button.config(command=lambda: summarize_external_links(self.controller))
+                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\Excel_tools_develop\Excel_tools_develop_v38\worksheet_summary.py", line 13, in summarize_external_links
+    formulas_to_summarize, is_filtered = _get_summary_data(controller)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\Excel_tools_develop\Excel_tools_develop_v38\core\data_processor.py", line 5, in _get_summary_data
+    formulas_to_summarize = [pane.result_tree.item(item, "values") for item in pane.result_tree.get_children()]
+                                                                               ^^^^^^^^^^^^^^^^
+AttributeError: 'WorksheetController' object has no attribute 'result_tree'
