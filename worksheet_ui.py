@@ -104,6 +104,10 @@ def create_ui_widgets(self):
     self.import_button.pack(side=tk.LEFT, padx=5)
     self.reconnect_button = ttk.Button(summary_frame, text="Reconnect")
     self.reconnect_button.pack(side=tk.LEFT, padx=5)
+    
+    # Add sync button next to reconnect (will be configured by comparator)
+    self.sync_button = ttk.Button(summary_frame, text="Sync", state="disabled")
+    self.sync_button.pack(side=tk.LEFT, padx=5)
 
     self.formula_list_label = ttk.Label(self, text="Formula List:", font=main_label_font)
     self.formula_list_label.grid(row=4, column=0, sticky=tk.W, pady=(10, 0))

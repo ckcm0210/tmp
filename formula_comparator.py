@@ -37,6 +37,7 @@ class ExcelFormulaComparator:
         first_row = ttk.Frame(button_frame)
         first_row.grid(row=0, column=0, columnspan=4, sticky="ew", pady=2)
         
+        # Worksheet section
         ttk.Label(first_row, text="Worksheet:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
         self.worksheet_var = tk.StringVar(value="sheet1")
         self.sheet1_radio = ttk.Radiobutton(first_row, text="Sheet1", variable=self.worksheet_var, value="sheet1")
@@ -44,41 +45,31 @@ class ExcelFormulaComparator:
         self.sheet2_radio = ttk.Radiobutton(first_row, text="Sheet2", variable=self.worksheet_var, value="sheet2")
         self.sheet2_radio.pack(side=tk.LEFT, padx=2)
         
+        # Separator
         ttk.Label(first_row, text=" | ", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         
+        # Mode Button section (new)
+        self.current_mode = "quick"
+        self.mode_button = ttk.Button(
+            first_row, 
+            text="Mode: Quick", 
+            command=self.toggle_scan_mode
+        )
+        self.mode_button.pack(side=tk.LEFT, padx=5)
+        
+        # Separator
+        ttk.Label(first_row, text=" | ", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+        
+        # Target section
         ttk.Label(first_row, text="Target:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(5, 5))
         self.scan_full_button = ttk.Button(first_row, text="Full Worksheet", command=self.scan_worksheet_full, style="Large.TButton")
         self.scan_full_button.pack(side=tk.LEFT, padx=2)
         self.scan_selected_button = ttk.Button(first_row, text="Selected Range", command=self.scan_worksheet_selected, style="Large.TButton")
         self.scan_selected_button.pack(side=tk.LEFT, padx=2)
         
-        second_row = ttk.Frame(button_frame)
-        second_row.grid(row=1, column=0, columnspan=4, sticky="ew", pady=2)
+        # Remove second row with Selection info
         
-        ttk.Label(second_row, text="Mode:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
-        self.mode_var = tk.StringVar(value="quick")
-        self.quick_radio = ttk.Radiobutton(second_row, text="Quick", variable=self.mode_var, value="quick")
-        self.quick_radio.pack(side=tk.LEFT, padx=2)
-        self.full_radio = ttk.Radiobutton(second_row, text="Full", variable=self.mode_var, value="full")
-        self.full_radio.pack(side=tk.LEFT, padx=2)
-        
-        ttk.Label(second_row, text=" | ", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Label(second_row, text="Selection:", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(5, 5))
-        self.selection_label = ttk.Label(second_row, text="A1 (1 cell)", foreground="blue", font=("Arial", 9))
-        self.selection_label.pack(side=tk.LEFT, padx=2)
-        
-        third_row = ttk.Frame(button_frame)
-        third_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=5)
-        
-        separator = ttk.Separator(third_row, orient=tk.VERTICAL)
-        separator.pack(side=tk.LEFT, fill='y', padx=10, pady=5)
-
-        self.btn_sync_1_to_2 = ttk.Button(third_row, text="Sync 1 -> 2", command=self.sync_1_to_2, style="Large.TButton")
-        self.btn_sync_1_to_2.pack(side=tk.LEFT, padx=5)
-
-        self.btn_sync_2_to_1 = ttk.Button(third_row, text="Sync 2 -> 1", command=self.sync_2_to_1, style="Large.TButton")
-        self.btn_sync_2_to_1.pack(side=tk.LEFT, padx=5)
+        # Remove third row with central sync buttons
 
         self.paned_window = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
         self.paned_window.pack(fill='both', expand=True)
@@ -87,19 +78,36 @@ class ExcelFormulaComparator:
         left_frame = ttk.Frame(self.paned_window)
         self.paned_window.add(left_frame, weight=1)
         self.left_controller = WorksheetController(left_frame, self.root, "Worksheet1")
+        
+        # Configure left sync button (Sync 1 -> 2)
+        self.left_controller.view.sync_button.config(
+            text="Sync 1 -> 2",
+            command=self.sync_1_to_2,
+            state="normal"
+        )
 
         self.right_frame_placeholder = ttk.Frame(self.paned_window)
         self.paned_window.add(self.right_frame_placeholder, weight=1)
         self.paned_window.forget(self.right_frame_placeholder)
 
+    def toggle_scan_mode(self):
+        """Toggle between Quick and Full scan modes"""
+        if self.current_mode == "quick":
+            self.current_mode = "full"
+            self.mode_button.config(text="Mode: Full")
+        else:
+            self.current_mode = "quick"
+            self.mode_button.config(text="Mode: Quick")
+        print(f"Scan mode changed to: {self.current_mode}")
+
     def scan_worksheet_full(self):
-        mode = self.mode_var.get()
+        mode = self.current_mode  # Use current_mode instead of mode_var
         controller = self._get_active_controller()
         self.update_selection_info(controller)
         refresh_data(controller, self.scan_full_button, scan_mode=mode)
 
     def scan_worksheet_selected(self):
-        mode = self.mode_var.get()
+        mode = self.current_mode  # Use current_mode instead of mode_var
         controller = self._get_active_controller()
         
         try:
@@ -107,7 +115,7 @@ class ExcelFormulaComparator:
                 try:
                     controller.xl = win32com.client.GetActiveObject("Excel.Application")
                 except:
-                    self.selection_label.config(text="Excel not found")
+                    print("Excel not found")
                     return
             
             if hasattr(controller, 'xl') and controller.xl:
@@ -137,7 +145,7 @@ class ExcelFormulaComparator:
                 controller.scanning_selected_range = True
                 
                 cell_word = "cell" if original_cell_count == 1 else "cells"
-                self.selection_label.config(text=f"{original_selected_address} ({original_cell_count} {cell_word})")
+                print(f"Selected: {original_selected_address} ({original_cell_count} {cell_word})")
                 
                 import time
                 time.sleep(0.1)
@@ -146,20 +154,21 @@ class ExcelFormulaComparator:
             else:
                 self.selection_label.config(text="Not connected")
         except Exception as e:
-            self.selection_label.config(text="Error getting selection")
+            print("Error getting selection")
     
     def update_selection_info(self, controller):
+        """Update selection info (now just prints to console since UI element removed)"""
         try:
             if hasattr(controller, 'xl') and controller.xl and hasattr(controller, 'worksheet') and controller.worksheet:
                 selection = controller.xl.Selection
                 address = selection.Address
                 cell_count = selection.Count
                 clean_address = address.replace('$', '')
-                self.selection_label.config(text=f"{clean_address} ({cell_count} cells)")
+                print(f"Selection: {clean_address} ({cell_count} cells)")
             else:
-                self.selection_label.config(text="Not connected")
+                print("Excel not connected")
         except Exception as e:
-            self.selection_label.config(text="A1 (1 cell)")
+            print("Selection info: A1 (1 cell)")
 
     def sync_1_to_2(self):
         source_controller = self._get_active_controller("sheet1")
@@ -209,5 +218,31 @@ class ExcelFormulaComparator:
 
                 self.right_controller = WorksheetController(self.right_frame_placeholder, self.root, "Worksheet2")
                 
+                # Configure right sync button (Sync 2 -> 1)
+                self.right_controller.view.sync_button.config(
+                    text="Sync 2 -> 1",
+                    command=self.sync_2_to_1,
+                    state="normal"
+                )
+                
                 self.main_window.update_idletasks()
             return self.right_controller
+    
+    def hide_worksheet2_interface(self):
+        """Hide worksheet2 interface and reset window to single worksheet view"""
+        if self.right_controller is not None:
+            # Remove the right pane from the paned window
+            self.paned_window.forget(self.right_frame_placeholder)
+            
+            # Destroy the right controller to free memory
+            if hasattr(self.right_controller, 'view'):
+                self.right_controller.view.destroy()
+            self.right_controller = None
+            
+            # Reset window size to single worksheet size
+            current_height = self.main_window.winfo_height()
+            self.main_window.geometry(f"900x{current_height}")
+            
+            print("Hidden worksheet2 interface and reset window size")
+        else:
+            print("Worksheet2 interface is already hidden")

@@ -21,6 +21,11 @@ class ExcelToolsApp:
         self.excel_comparator = None
         self.workspace = None
         
+        # Window size management
+        self.default_size = "900x1100"  # Default size for single worksheet
+        self.expanded_size = "1800x1100"  # Expanded size for dual worksheets
+        self.current_size_mode = "default"  # "default" or "expanded"
+        
         self.setup_window()
         self.setup_mode_controls()
         self.setup_normal_mode()
@@ -57,6 +62,14 @@ class ExcelToolsApp:
             command=self.toggle_always_on_top
         )
         self.always_on_top_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Window size control button
+        self.window_size_btn = ttk.Button(
+            self.mode_controls_frame,
+            text="Reset Window Size",
+            command=self.reset_window_size
+        )
+        self.window_size_btn.pack(side=tk.LEFT, padx=5)
         
         # Mode indicator label
         self.mode_label = ttk.Label(
@@ -114,6 +127,36 @@ class ExcelToolsApp:
         """Update the always on top button text"""
         status = "ON" if self.mode_manager.always_on_top else "OFF"
         self.always_on_top_btn.config(text=f"Always On Top: {status}")
+    
+    def reset_window_size(self):
+        """Reset window to default size and hide worksheet2 interface"""
+        self.root.geometry(self.default_size)
+        self.current_size_mode = "default"
+        self.window_size_btn.config(text="Reset Window Size")
+        
+        # Hide worksheet2 interface in Normal Mode
+        if hasattr(self, 'excel_comparator') and self.excel_comparator:
+            try:
+                # Use the new hide_worksheet2_interface method
+                self.excel_comparator.hide_worksheet2_interface()
+            except Exception as e:
+                print(f"Could not hide worksheet2 interface: {e}")
+        
+        print(f"Window size reset to default: {self.default_size}")
+    
+    def expand_window_size(self):
+        """Expand window for dual worksheet view"""
+        self.root.geometry(self.expanded_size)
+        self.current_size_mode = "expanded"
+        self.window_size_btn.config(text="Reset Window Size")
+        print(f"Window size expanded to: {self.expanded_size}")
+    
+    def toggle_window_size(self):
+        """Toggle between default and expanded window sizes"""
+        if self.current_size_mode == "default":
+            self.expand_window_size()
+        else:
+            self.reset_window_size()
     
     def on_mode_switch(self, old_mode, new_mode):
         """Handle mode switch events"""

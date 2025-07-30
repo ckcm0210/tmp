@@ -21,6 +21,11 @@ class ExcelToolsApp:
         self.excel_comparator = None
         self.workspace = None
         
+        # Window size management
+        self.default_size = "900x1100"  # Default size for single worksheet
+        self.expanded_size = "1800x1100"  # Expanded size for dual worksheets
+        self.current_size_mode = "default"  # "default" or "expanded"
+        
         self.setup_window()
         self.setup_mode_controls()
         self.setup_normal_mode()
@@ -58,6 +63,14 @@ class ExcelToolsApp:
         )
         self.always_on_top_btn.pack(side=tk.LEFT, padx=5)
         
+        # Window size control button
+        self.window_size_btn = ttk.Button(
+            self.mode_controls_frame,
+            text="Reset Window Size",
+            command=self.reset_window_size
+        )
+        self.window_size_btn.pack(side=tk.LEFT, padx=5)
+        
         # Mode indicator label
         self.mode_label = ttk.Label(
             self.mode_controls_frame,
@@ -85,26 +98,24 @@ class ExcelToolsApp:
         self.workspace = Workspace(self.workspace_frame)
     
     def setup_inspect_mode(self):
-        """Setup Inspect Mode UI (placeholder for now)"""
+        """Setup Inspect Mode UI with simplified worksheet functionality"""
         if self.notebook:
             self.notebook.destroy()
         
-        # Create a placeholder for Inspect Mode
+        # Create Inspect Mode container
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(pady=10, padx=10, expand=True, fill="both")
         
-        # Placeholder frame
-        placeholder_frame = ttk.Frame(self.notebook)
-        self.notebook.add(placeholder_frame, text='Inspect Mode')
+        # Create Inspect Mode frame
+        inspect_frame = ttk.Frame(self.notebook)
+        self.notebook.add(inspect_frame, text='Inspect Mode - Cell Analysis')
         
-        # Placeholder content
-        placeholder_label = ttk.Label(
-            placeholder_frame,
-            text="INSPECT MODE\n\nDual-pane worksheet comparison\ncoming soon...\n\nThis will include:\n• Left and Right worksheet panels\n• Simplified interface\n• Focus on single cell analysis",
-            font=("Arial", 12),
-            justify=tk.CENTER
-        )
-        placeholder_label.pack(expand=True)
+        # Import and create Inspect Mode with simplified worksheet functionality
+        from ui.modes.inspect_mode import InspectMode
+        self.inspect_mode = InspectMode(inspect_frame, self.root)
+        
+        # Auto-expand window for dual-pane Inspect Mode
+        self.expand_window_size()
     
     def toggle_mode(self):
         """Toggle between Normal and Inspect modes"""
@@ -119,6 +130,27 @@ class ExcelToolsApp:
         """Update the always on top button text"""
         status = "ON" if self.mode_manager.always_on_top else "OFF"
         self.always_on_top_btn.config(text=f"Always On Top: {status}")
+    
+    def reset_window_size(self):
+        """Reset window to default size (single worksheet size)"""
+        self.root.geometry(self.default_size)
+        self.current_size_mode = "default"
+        self.window_size_btn.config(text="Reset Window Size")
+        print(f"Window size reset to default: {self.default_size}")
+    
+    def expand_window_size(self):
+        """Expand window for dual worksheet view"""
+        self.root.geometry(self.expanded_size)
+        self.current_size_mode = "expanded"
+        self.window_size_btn.config(text="Reset Window Size")
+        print(f"Window size expanded to: {self.expanded_size}")
+    
+    def toggle_window_size(self):
+        """Toggle between default and expanded window sizes"""
+        if self.current_size_mode == "default":
+            self.expand_window_size()
+        else:
+            self.reset_window_size()
     
     def on_mode_switch(self, old_mode, new_mode):
         """Handle mode switch events"""

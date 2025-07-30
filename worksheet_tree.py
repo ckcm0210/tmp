@@ -437,73 +437,223 @@ def on_select(controller, event):
     current_detail_text.insert('end', "Displayed Value: ", "label")
     current_detail_text.insert('end', f"{display_value}\n\n", "value")
     current_detail_text.insert('end', "Formula Content:\n", "label")
-    current_detail_text.insert('end', f"{formula}\n\n", "formula_content")
+    current_detail_text.insert('end', f"{formula}  ", "formula_content")
     
-    if controller.xl and controller.worksheet:
-        read_func = read_external_cell_value
-        referenced_values = get_referenced_cell_values(
-            formula,
-            controller.worksheet,
-            controller.workbook.FullName,
-            read_func,
-            lambda name, obj: find_matching_sheet(controller.workbook, name)
-        )
-        if referenced_values:
-            current_detail_text.insert('end', "Referenced Cell Values (Non-Range):\n", "label")
-            for ref_addr, ref_val in referenced_values.items():
-                display_text = ref_addr
-                if '|' in ref_addr:
-                    _, display_text = ref_addr.split('|', 1)
-
-                current_detail_text.insert('end', f"  {display_text}: {ref_val}  ", "referenced_value")
-
-                workbook_path = None
-                sheet_name = None
-                cell_address_to_go = None
-                
-                try:
-                    if '|' in ref_addr:
-                        full_path, display_ref = ref_addr.split('|', 1)
-                        workbook_path = full_path
-                        
-                        if ']' in display_ref and '!' in display_ref:
-                            sheet_and_cell = display_ref.split(']', 1)[1]
-                            parts = sheet_and_cell.rsplit('!', 1)
-                            sheet_name = parts[0].strip("'")
-                            cell_address_to_go = parts[1]
-                        else:
-                            if display_ref.startswith('[') and ']' in display_ref:
-                                bracket_end = display_ref.find(']')
-                                file_name = display_ref[1:bracket_end]
-                                remaining = display_ref[bracket_end+1:]
-                                if '!' in remaining:
-                                    sheet_name, cell_address_to_go = remaining.split('!', 1)
-                                    workbook_path = find_external_workbook_path(controller, file_name)
+    # Add Explode button next to the formula
+    try:
+        def build_explode_handler():
+            def handler():
+                # 使用當前 cell 的信息進行爆炸分析
+                if hasattr(controller, 'workbook') and controller.workbook:
+                    current_workbook_path = controller.workbook.FullName
+                    current_sheet_name = controller.worksheet.Name if hasattr(controller, 'worksheet') and controller.worksheet else "Unknown"
+                    
+                    # 從選中的項目獲取 cell 地址
+                    selected_item = controller.view.result_tree.selection()
+                    if selected_item:
+                        item_id = selected_item[0]
+                        current_cell_address = controller.cell_addresses.get(item_id, "A1")
+                        explode_dependencies_popup(controller, current_workbook_path, current_sheet_name, current_cell_address, f"{current_sheet_name}!{current_cell_address}")
                     else:
+                        from tkinter import messagebox
+                        messagebox.showwarning("No Selection", "Please select a cell first.")
+                else:
+                    from tkinter import messagebox
+                    messagebox.showerror("Excel Not Connected", "Excel connection not available for dependency analysis.")
+            return handler
+        
+        explode_btn = tk.Button(current_detail_text, text="Explode", font=("Arial", 8, "bold"), cursor="hand2", bg="#ffeb3b", command=build_explode_handler())
+        current_detail_text.window_create('end', window=explode_btn)
+    except Exception as e:
+        print(f"Could not create Explode button: {e}")
+    
+    current_detail_text.insert('end', "\n\n")
+    
+    # 嘗試獲取引用的儲存格值，但即使失敗也要提供 Go to Reference 功能
+    referenced_values = None
+    excel_connected = controller.xl and controller.worksheet
+    
+    if excel_connected:
+        try:
+            read_func = read_external_cell_value
+            referenced_values = get_referenced_cell_values(
+                formula,
+                controller.worksheet,
+                controller.workbook.FullName,
+                read_func,
+                lambda name, obj: find_matching_sheet(controller.workbook, name)
+            )
+        except Exception as e:
+            print(f"Warning: Could not get referenced values: {e}")
+            referenced_values = None
+    
+    # 解析公式中的引用，即使沒有 Excel 連接也能提供 Go to Reference 功能
+    formula_references = []
+    if formula and formula.startswith('='):
+        try:
+            # 解析外部引用 (例如: ='C:\path\[file.xlsx]Sheet'!$A$1)
+            import re
+            external_pattern = r"'([^']*\[[^\]]+\][^']*)'!\$?([A-Z]+)\$?(\d+)"
+            external_matches = re.findall(external_pattern, formula)
+            
+            for match in external_matches:
+                full_ref, col, row = match
+                # 提取檔案路徑和工作表名稱
+                if '[' in full_ref and ']' in full_ref:
+                    path_part = full_ref.split('[')[0]
+                    file_part = full_ref.split('[')[1].split(']')[0]
+                    sheet_part = full_ref.split(']')[1] if ']' in full_ref else 'Sheet1'
+                    
+                    workbook_path = path_part + file_part
+                    sheet_name = sheet_part
+                    cell_address = f"{col}{row}"
+                    
+                    formula_references.append({
+                        'display': f"{file_part}]{sheet_name}!{cell_address}",
+                        'workbook_path': workbook_path,
+                        'sheet_name': sheet_name,
+                        'cell_address': cell_address,
+                        'value': 'N/A (Excel not connected)' if not excel_connected else None
+                    })
+            
+            # 解析本地引用 (例如: Sheet1!A1, 工作表1!A1)
+            # 修復：支援中文工作表名稱，但排除公式開頭的 = 號
+            local_pattern = r"(?<!=)([^'!\[\]=]+)!\$?([A-Z]+)\$?(\d+)"
+            local_matches = re.findall(local_pattern, formula)
+            
+            for match in local_matches:
+                sheet, col, row = match
+                if excel_connected and controller.workbook:
+                    workbook_path = controller.workbook.FullName
+                else:
+                    workbook_path = "Current Workbook"
+                
+                formula_references.append({
+                    'display': f"{sheet}!{col}{row}",
+                    'workbook_path': workbook_path,
+                    'sheet_name': sheet,
+                    'cell_address': f"{col}{row}",
+                    'value': 'N/A (Excel not connected)' if not excel_connected else None
+                })
+                
+        except Exception as e:
+            print(f"Warning: Could not parse formula references: {e}")
+    
+    # 顯示引用的儲存格值
+    current_detail_text.insert('end', "Referenced Cell Values (Non-Range):\n", "label")
+    
+    if referenced_values:
+        # 如果有 Excel 連接且成功獲取值，顯示實際值
+        for ref_addr, ref_val in referenced_values.items():
+            display_text = ref_addr
+            if '|' in ref_addr:
+                _, display_text = ref_addr.split('|', 1)
+
+            current_detail_text.insert('end', f"  {display_text}: {ref_val}  ", "referenced_value")
+
+            workbook_path = None
+            sheet_name = None
+            cell_address_to_go = None
+            
+            try:
+                if '|' in ref_addr:
+                    full_path, display_ref = ref_addr.split('|', 1)
+                    workbook_path = full_path
+                    
+                    if ']' in display_ref and '!' in display_ref:
+                        sheet_and_cell = display_ref.split(']', 1)[1]
+                        parts = sheet_and_cell.rsplit('!', 1)
+                        sheet_name = parts[0].strip("'")
+                        cell_address_to_go = parts[1]
+                    else:
+                        if display_ref.startswith('[') and ']' in display_ref:
+                            bracket_end = display_ref.find(']')
+                            file_name = display_ref[1:bracket_end]
+                            remaining = display_ref[bracket_end+1:]
+                            if '!' in remaining:
+                                sheet_name, cell_address_to_go = remaining.split('!', 1)
+                                workbook_path = find_external_workbook_path(controller, file_name)
+                else:
+                    if excel_connected and controller.workbook:
                         workbook_path = controller.workbook.FullName
-                        if '!' in ref_addr:
-                            parts = ref_addr.rsplit('!', 1)
-                            sheet_name = parts[0]
-                            cell_address_to_go = parts[1]
+                    else:
+                        workbook_path = None
+                    if '!' in ref_addr:
+                        parts = ref_addr.rsplit('!', 1)
+                        sheet_name = parts[0]
+                        cell_address_to_go = parts[1]
 
-                    if workbook_path and sheet_name and cell_address_to_go:
-                        def build_handler(wp, sn, ca, ref_display):
-                            def handler():
-                                go_to_reference_new_tab(controller, wp, sn, ca, ref_display)
-                            return handler
-                        
-                        btn = tk.Button(current_detail_text, text="Go to Reference", font=("Arial", 7), cursor="hand2", command=build_handler(workbook_path, sheet_name, cell_address_to_go, display_text))
-                        current_detail_text.window_create('end', window=btn)
+                if workbook_path and sheet_name and cell_address_to_go:
+                    def build_handler(wp, sn, ca, ref_display):
+                        def handler():
+                            go_to_reference_with_option(controller, wp, sn, ca, ref_display)
+                        return handler
+                    
+                    # Create frame for buttons
+                    btn_frame = tk.Frame(current_detail_text)
+                    current_detail_text.window_create('end', window=btn_frame)
+                    
+                    # Go to Reference button
+                    btn = tk.Button(btn_frame, text="Go to Reference", font=("Arial", 7), cursor="hand2", command=build_handler(workbook_path, sheet_name, cell_address_to_go, display_text))
+                    btn.pack(side=tk.LEFT, padx=2)
+                    
+                    # Read Only button (using openpyxl)
+                    def build_read_only_handler(wp, sn, ca, ref_display):
+                        def handler():
+                            read_reference_openpyxl(controller, wp, sn, ca, ref_display)
+                        return handler
+                    
+                    read_btn = tk.Button(btn_frame, text="Read Only", font=("Arial", 7), cursor="hand2", command=build_read_only_handler(workbook_path, sheet_name, cell_address_to_go, display_text))
+                    read_btn.pack(side=tk.LEFT, padx=2)
+                    
+                    # Explode Dependencies button
+                    def build_explode_handler(wp, sn, ca, ref_display):
+                        def handler():
+                            explode_dependencies_popup(controller, wp, sn, ca, ref_display)
+                        return handler
+                    
 
-                except Exception as e:
-                    print(f"INFO: Could not create navigation button for '{ref_addr}': {e}")
+            except Exception as e:
+                print(f"INFO: Could not create navigation button for '{ref_addr}': {e}")
 
-                current_detail_text.insert('end', "\n")
-        else:
-            current_detail_text.insert('end', "Referenced Cell Values (Non-Range):\n", "label")
-            current_detail_text.insert('end', "  No individual cell references found or accessible.\n", "info_text")
+            current_detail_text.insert('end', "\n")
+    elif formula_references:
+        # 如果沒有 Excel 連接但解析到引用，仍然提供 Go to Reference 功能
+        for ref in formula_references:
+            value_text = ref['value'] if ref['value'] else "N/A (Excel not connected)"
+            current_detail_text.insert('end', f"  {ref['display']}: {value_text}  ", "referenced_value")
+            
+            try:
+                # Create frame for buttons
+                btn_frame = tk.Frame(current_detail_text)
+                current_detail_text.window_create('end', window=btn_frame)
+                
+                # Go to Reference button
+                def build_handler(wp, sn, ca, ref_display):
+                    def handler():
+                        go_to_reference_with_option(controller, wp, sn, ca, ref_display)
+                    return handler
+                
+                btn = tk.Button(btn_frame, text="Go to Reference", font=("Arial", 7), cursor="hand2", command=build_handler(ref['workbook_path'], ref['sheet_name'], ref['cell_address'], ref['display']))
+                btn.pack(side=tk.LEFT, padx=2)
+                
+                # Read Only button (using openpyxl)
+                def build_read_only_handler(wp, sn, ca, ref_display):
+                    def handler():
+                        read_reference_openpyxl(controller, wp, sn, ca, ref_display)
+                    return handler
+                
+                read_btn = tk.Button(btn_frame, text="Read Only", font=("Arial", 7), cursor="hand2", command=build_read_only_handler(ref['workbook_path'], ref['sheet_name'], ref['cell_address'], ref['display']))
+                read_btn.pack(side=tk.LEFT, padx=2)
+            except Exception as e:
+                print(f"INFO: Could not create navigation button for '{ref['display']}': {e}")
+            
+            current_detail_text.insert('end', "\n")
     else:
-        current_detail_text.insert('end', "Excel connection not active to retrieve referenced values.\n", "info_text")
+        current_detail_text.insert('end', "  No individual cell references found or accessible.\n", "info_text")
+    
+    if not excel_connected:
+        current_detail_text.insert('end', "\nNote: Excel connection not active. Values shown as 'N/A' but Go to Reference still available.\n", "info_text")
         
 def on_double_click(controller, event):
     selected_item = controller.view.result_tree.selection()
@@ -607,3 +757,657 @@ def on_double_click(controller, event):
             activate_excel_window(controller)
         except Exception as e:
             messagebox.showerror("Excel Selection Error", f"Could not select cell {cell_address} in Excel. Please ensure the workbook and worksheet are still valid.\nError: {e}")
+
+# === Inspect Mode Go to Reference Patch ===
+def go_to_reference_inspect_mode(controller, workbook_path, sheet_name, cell_address):
+    """
+    Inspect Mode 專用的 Go to Reference 函數
+    在同一個面板中打開新標籤，而不是跳到左邊面板
+    """
+    import os
+    from tkinter import messagebox
+    
+    try:
+        print(f"[{controller.pane_name}] Go to Reference: {workbook_path} -> {sheet_name}!{cell_address}")
+        
+        # 檢查檔案是否存在
+        if not os.path.exists(workbook_path):
+            messagebox.showerror("File Not Found", f"Referenced file not found:\n{workbook_path}")
+            return
+        
+        # 在當前面板中創建新標籤
+        if hasattr(controller, 'tab_manager') and controller.tab_manager:
+            # 創建標籤標題
+            filename = os.path.basename(workbook_path)
+            tab_title = f"{filename}!{sheet_name}!{cell_address}"
+            
+            # 在當前面板中添加新標籤
+            controller.tab_manager.add_tab(tab_title, f"Reference: {cell_address}")
+            
+            print(f"[{controller.pane_name}] Created new tab: {tab_title}")
+        
+        # 嘗試在 Excel 中打開並跳轉到指定儲存格
+        try:
+            import win32com.client
+            
+            # 連接到 Excel
+            xl = win32com.client.GetActiveObject("Excel.Application")
+            
+            # 打開工作簿（如果尚未打開）
+            workbook = None
+            for wb in xl.Workbooks:
+                if wb.FullName == workbook_path:
+                    workbook = wb
+                    break
+            
+            if not workbook:
+                workbook = xl.Workbooks.Open(workbook_path)
+            
+            # 切換到指定工作表
+            worksheet = workbook.Worksheets(sheet_name)
+            worksheet.Activate()
+            
+            # 選擇指定儲存格
+            cell_range = worksheet.Range(cell_address)
+            cell_range.Select()
+            
+            print(f"[{controller.pane_name}] Successfully navigated to {sheet_name}!{cell_address}")
+            
+        except Exception as excel_error:
+            print(f"[{controller.pane_name}] Excel navigation failed: {excel_error}")
+            messagebox.showwarning("Excel Navigation", 
+                f"Could not navigate to {sheet_name}!{cell_address} in Excel.\n"
+                f"Please open the file manually.\n\nError: {excel_error}")
+        
+    except Exception as e:
+        print(f"[{controller.pane_name}] Go to Reference error: {e}")
+        messagebox.showerror("Go to Reference Error", f"Could not process reference: {e}")
+
+def is_inspect_mode(controller):
+    """檢查當前控制器是否在 Inspect Mode"""
+    return hasattr(controller, 'pane_name') and 'Inspect' in str(controller.pane_name)
+
+def go_to_reference_enhanced(controller, workbook_path, sheet_name, cell_address):
+    """
+    增強版的 Go to Reference 函數
+    自動檢測是否在 Inspect Mode 並使用適當的處理方式
+    """
+    if is_inspect_mode(controller):
+        # 在 Inspect Mode 中使用專用函數
+        go_to_reference_inspect_mode(controller, workbook_path, sheet_name, cell_address)
+    else:
+        # 在 Normal Mode 中使用原來的函數
+        from worksheet_tree import go_to_reference
+        go_to_reference(controller, workbook_path, sheet_name, cell_address)
+
+def go_to_reference_with_option(controller, workbook_path, sheet_name, cell_address, reference_display):
+    """
+    Go to Reference with option to open Excel or not
+    Default behavior: open Excel and navigate
+    """
+    go_to_reference_new_tab(controller, workbook_path, sheet_name, cell_address, reference_display)
+
+def read_reference_openpyxl(controller, workbook_path, sheet_name, cell_address, reference_display):
+    """
+    Read reference using openpyxl without opening Excel
+    Uses the enhanced openpyxl resolver to handle external references
+    """
+    try:
+        from utils.openpyxl_resolver import read_cell_with_resolved_references
+        
+        # Check if file exists
+        if not os.path.exists(workbook_path):
+            messagebox.showerror("File Not Found", f"Referenced file not found:\n{workbook_path}")
+            return
+        
+        # Read cell information using enhanced openpyxl
+        cell_info = read_cell_with_resolved_references(workbook_path, sheet_name, cell_address)
+        
+        if 'error' in cell_info:
+            messagebox.showerror("Read Error", f"Could not read cell {sheet_name}!{cell_address}:\n{cell_info['error']}")
+            return
+        
+        # Create new tab to display the information
+        try:
+            file_name = os.path.basename(workbook_path)
+            if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+                file_name = file_name[:-4]
+            
+            tab_name = f"[ReadOnly] {file_name}|{sheet_name}!{cell_address}"
+            
+            if len(tab_name) > 30:
+                tab_name = f"[RO] {file_name[:8]}...|{sheet_name[:8]}...!{cell_address}"
+        except:
+            tab_name = f"[ReadOnly] {reference_display}"
+            if len(tab_name) > 25:
+                tab_name = tab_name[:22] + "..."
+        
+        # Ensure unique tab name
+        counter = 1
+        original_tab_name = tab_name
+        while tab_name in controller.tab_manager.detail_tabs:
+            tab_name = f"{original_tab_name}({counter})"
+            counter += 1
+        
+        # Create new detail tab
+        new_detail_text = controller.tab_manager.create_detail_tab(tab_name)
+        
+        # Display cell information
+        new_detail_text.insert('end', "Read Mode: ", "label")
+        new_detail_text.insert('end', "openpyxl (Excel not opened)\n", "info_text")
+        new_detail_text.insert('end', "Type: ", "label")
+        new_detail_text.insert('end', f"{cell_info['cell_type']} / ", "value")
+        new_detail_text.insert('end', "Cell Address: ", "label")
+        new_detail_text.insert('end', f"{sheet_name}!{cell_address}\n", "value")
+        new_detail_text.insert('end', "Workbook: ", "label")
+        new_detail_text.insert('end', f"{os.path.basename(workbook_path)}\n", "value")
+        
+        if cell_info['has_external_references']:
+            new_detail_text.insert('end', "External References: ", "label")
+            new_detail_text.insert('end', "Resolved ✓\n", "result_value")
+        
+        new_detail_text.insert('end', "Calculated Result: ", "label")
+        new_detail_text.insert('end', f"{cell_info['calculated_value']} / ", "result_value")
+        new_detail_text.insert('end', "Displayed Value: ", "label")
+        new_detail_text.insert('end', f"{cell_info['display_value']}\n\n", "value")
+        
+        if cell_info['formula']:
+            new_detail_text.insert('end', "Formula Content (External References Resolved):\n", "label")
+            new_detail_text.insert('end', f"{cell_info['formula']}  ", "formula_content")
+            
+            # Add Explode button next to the formula in Read Only mode
+            try:
+                def build_explode_handler_readonly():
+                    def handler():
+                        explode_dependencies_popup(controller, workbook_path, sheet_name, cell_address, f"{sheet_name}!{cell_address}")
+                    return handler
+                
+                explode_btn = tk.Button(new_detail_text, text="Explode", font=("Arial", 8, "bold"), cursor="hand2", bg="#ffeb3b", command=build_explode_handler_readonly())
+                new_detail_text.window_create('end', window=explode_btn)
+            except Exception as e:
+                print(f"Could not create Explode button in Read Only mode: {e}")
+            
+            new_detail_text.insert('end', "\n\n")
+            
+            # Parse the resolved formula for additional external references
+            # and provide Go to Reference buttons for them
+            try:
+                resolved_formula = cell_info['formula']
+                formula_references = []
+                
+                if resolved_formula and resolved_formula.startswith('='):
+                    import re
+                    # Parse external references (e.g., ='C:\path\[file.xlsx]Sheet'!$A$1)
+                    external_pattern = r"'([^']*\[[^\]]+\][^']*)'!\$?([A-Z]+)\$?(\d+)"
+                    external_matches = re.findall(external_pattern, resolved_formula)
+                    
+                    for match in external_matches:
+                        full_ref, col, row = match
+                        # Extract file path and sheet name
+                        if '[' in full_ref and ']' in full_ref:
+                            path_part = full_ref.split('[')[0]
+                            file_part = full_ref.split('[')[1].split(']')[0]
+                            sheet_part = full_ref.split(']')[1] if ']' in full_ref else 'Sheet1'
+                            
+                            workbook_path = path_part + file_part
+                            sheet_name = sheet_part
+                            cell_address = f"{col}{row}"
+                            
+                            # 讀取目標 cell 的實際內容
+                            try:
+                                from utils.openpyxl_resolver import read_cell_with_resolved_references
+                                
+                                # 修復：如果工作表名稱包含中文或特殊字符，嘗試加上單引號
+                                sheet_name_to_use = sheet_name
+                                target_cell_info = read_cell_with_resolved_references(workbook_path, sheet_name_to_use, cell_address)
+                                
+                                # 如果失敗且工作表名稱不是純英文數字，嘗試加單引號
+                                if 'error' in target_cell_info and not sheet_name.replace('_', '').isalnum():
+                                    sheet_name_to_use = f"'{sheet_name}'"
+                                    target_cell_info = read_cell_with_resolved_references(workbook_path, sheet_name_to_use, cell_address)
+                                
+                                if 'error' in target_cell_info:
+                                    cell_value = f"Error: {target_cell_info['error']}"
+                                else:
+                                    cell_value = target_cell_info.get('display_value', 'N/A')
+                            except Exception as e:
+                                cell_value = f"Read Error: {str(e)}"
+                            
+                            formula_references.append({
+                                'display': f"[{file_part}]{sheet_name}!{cell_address}",  # 修復：添加開頭的 [
+                                'workbook_path': workbook_path,
+                                'sheet_name': sheet_name,
+                                'cell_address': cell_address,
+                                'value': cell_value  # 顯示實際讀取的值
+                            })
+                    
+                    # Parse local references (e.g., Sheet1!A1) - but only if not part of external references
+                    # First, get all external reference patterns to exclude them
+                    external_refs_in_formula = set()
+                    for match in external_matches:
+                        full_ref, col, row = match
+                        if '[' in full_ref and ']' in full_ref:
+                            sheet_part = full_ref.split(']')[1] if ']' in full_ref else 'Sheet1'
+                            external_refs_in_formula.add(f"{sheet_part}!{col}{row}")
+                    
+                    # Parse local references using a more robust method
+                    # 先移除公式開頭的 = 號，然後尋找所有 worksheet!cell 模式
+                    formula_without_equals = resolved_formula[1:] if resolved_formula.startswith('=') else resolved_formula
+                    
+                    # 使用更精確的方法：尋找 ! 符號，然後向前和向後解析
+                    import re
+                    local_matches = []
+                    
+                    # 找到所有 ! 的位置
+                    exclamation_positions = [i for i, char in enumerate(formula_without_equals) if char == '!']
+                    
+                    for pos in exclamation_positions:
+                        # 向前找工作表名稱
+                        start = pos - 1
+                        
+                        # 檢查是否以單引號結尾（如 'GDP11'!）
+                        if start >= 0 and formula_without_equals[start] == "'":
+                            # 向前找到開始的單引號
+                            quote_start = start - 1
+                            while quote_start >= 0 and formula_without_equals[quote_start] != "'":
+                                quote_start -= 1
+                            
+                            if quote_start >= 0:
+                                # 提取單引號內的工作表名稱
+                                sheet_name = formula_without_equals[quote_start + 1:start]
+                            else:
+                                continue
+                        else:
+                            # 沒有單引號，向前找到邊界
+                            while start >= 0 and formula_without_equals[start] not in "+'*/-()=,":
+                                start -= 1
+                            start += 1
+                            sheet_name = formula_without_equals[start:pos]
+                        
+                        # 向後找 cell 地址
+                        remaining = formula_without_equals[pos + 1:]
+                        cell_match = re.match(r'\$?([A-Z]+)\$?(\d+)', remaining)
+                        
+                        if cell_match and sheet_name:
+                            col, row = cell_match.groups()
+                            
+                            # 檢查是否為外部引用（包含 [ ] 或已在外部引用列表中）
+                            if '[' not in sheet_name and ']' not in sheet_name:
+                                ref_key = f"{sheet_name}!{col}{row}"
+                                if ref_key not in external_refs_in_formula:
+                                    local_matches.append((sheet_name, col, row))
+                    
+                    for match in local_matches:
+                        sheet, col, row = match
+                        ref_key = f"{sheet}!{col}{row}"
+                        # Skip if it's part of an external reference
+                        if ref_key not in external_refs_in_formula:
+                            # 讀取本地引用的實際內容
+                            try:
+                                from utils.openpyxl_resolver import read_cell_with_resolved_references
+                                
+                                # 修復：如果工作表名稱包含中文或特殊字符，嘗試加上單引號
+                                sheet_name_to_use = sheet
+                                target_cell_info = read_cell_with_resolved_references(workbook_path, sheet_name_to_use, f"{col}{row}")
+                                
+                                # 如果失敗且工作表名稱不是純英文數字，嘗試加單引號
+                                if 'error' in target_cell_info and not sheet.replace('_', '').isalnum():
+                                    sheet_name_to_use = f"'{sheet}'"
+                                    target_cell_info = read_cell_with_resolved_references(workbook_path, sheet_name_to_use, f"{col}{row}")
+                                
+                                if 'error' in target_cell_info:
+                                    cell_value = f"Error: {target_cell_info['error']}"
+                                else:
+                                    cell_value = target_cell_info.get('display_value', 'N/A')
+                            except Exception as e:
+                                cell_value = f"Read Error: {str(e)}"
+                            
+                            formula_references.append({
+                                'display': f"{sheet}!{col}{row}",
+                                'workbook_path': workbook_path,  # Same workbook as the current Read Only tab
+                                'sheet_name': sheet,
+                                'cell_address': f"{col}{row}",
+                                'value': cell_value  # 顯示實際讀取的值
+                            })
+                
+                # Parse relative references (e.g., A12, B5) - cells without worksheet prefix
+                if resolved_formula and resolved_formula.startswith('='):
+                    # 解析相對引用：沒有工作表名稱的 cell 引用
+                    relative_pattern = r"(?<![A-Za-z0-9_!'])([A-Z]+)(\d+)(?![A-Za-z0-9_])"
+                    relative_matches = re.findall(relative_pattern, formula_without_equals)
+                    
+                    for col, row in relative_matches:
+                        cell_address_rel = f"{col}{row}"
+                        
+                        # 檢查是否已經在絕對引用中（避免重複）
+                        already_exists = any(
+                            ref['cell_address'] == cell_address_rel 
+                            for ref in formula_references
+                        )
+                        
+                        if not already_exists:
+                            # 相對引用使用當前工作表
+                            try:
+                                from utils.openpyxl_resolver import read_cell_with_resolved_references
+                                
+                                # 使用當前工作表名稱（從 Cell Address 中提取）
+                                current_sheet = sheet_name  # 這是當前 Read Only tab 的工作表
+                                
+                                target_cell_info = read_cell_with_resolved_references(workbook_path, current_sheet, cell_address_rel)
+                                
+                                # 如果失敗且工作表名稱包含特殊字符，嘗試加單引號
+                                if 'error' in target_cell_info and not current_sheet.replace('_', '').isalnum():
+                                    sheet_name_to_use = f"'{current_sheet}'"
+                                    target_cell_info = read_cell_with_resolved_references(workbook_path, sheet_name_to_use, cell_address_rel)
+                                
+                                if 'error' in target_cell_info:
+                                    cell_value = f"Error: {target_cell_info['error']}"
+                                else:
+                                    cell_value = target_cell_info.get('display_value', 'N/A')
+                            except Exception as e:
+                                cell_value = f"Read Error: {str(e)}"
+                            
+                            formula_references.append({
+                                'display': f"{current_sheet}!{cell_address_rel}",  # 顯示完整引用
+                                'workbook_path': workbook_path,
+                                'sheet_name': current_sheet,
+                                'cell_address': cell_address_rel,
+                                'value': cell_value
+                            })
+                
+                # Display referenced cell values with Go to Reference buttons
+                if formula_references:
+                    new_detail_text.insert('end', "Referenced Cell Values (from Read Only mode):\n", "label")
+                    for ref in formula_references:
+                        new_detail_text.insert('end', f"  {ref['display']}: {ref['value']}  ", "referenced_value")
+                        
+                        try:
+                            # Create frame for buttons
+                            btn_frame = tk.Frame(new_detail_text)
+                            new_detail_text.window_create('end', window=btn_frame)
+                            
+                            # Go to Reference button
+                            def build_handler(wp, sn, ca, ref_display):
+                                def handler():
+                                    go_to_reference_with_option(controller, wp, sn, ca, ref_display)
+                                return handler
+                            
+                            btn = tk.Button(btn_frame, text="Go to Reference", font=("Arial", 7), cursor="hand2", command=build_handler(ref['workbook_path'], ref['sheet_name'], ref['cell_address'], ref['display']))
+                            btn.pack(side=tk.LEFT, padx=2)
+                            
+                            # Read Only button
+                            def build_read_only_handler(wp, sn, ca, ref_display):
+                                def handler():
+                                    read_reference_openpyxl(controller, wp, sn, ca, ref_display)
+                                return handler
+                            
+                            read_btn = tk.Button(btn_frame, text="Read Only", font=("Arial", 7), cursor="hand2", command=build_read_only_handler(ref['workbook_path'], ref['sheet_name'], ref['cell_address'], ref['display']))
+                            read_btn.pack(side=tk.LEFT, padx=2)
+                            
+                            # Explode Dependencies button
+                            def build_explode_handler(wp, sn, ca, ref_display):
+                                def handler():
+                                    explode_dependencies_popup(controller, wp, sn, ca, ref_display)
+                                return handler
+                            
+                        except Exception as e:
+                            print(f"INFO: Could not create navigation button for '{ref['display']}': {e}")
+                        
+                        new_detail_text.insert('end', "\n")
+                else:
+                    new_detail_text.insert('end', "Referenced Cell Values (from Read Only mode):\n", "label")
+                    new_detail_text.insert('end', "  No individual cell references found.\n", "info_text")
+                    
+            except Exception as e:
+                print(f"Warning: Could not parse formula references in Read Only mode: {e}")
+                new_detail_text.insert('end', "Referenced Cell Values (from Read Only mode):\n", "label")
+                new_detail_text.insert('end', f"  Error parsing references: {e}\n", "info_text")
+        else:
+            new_detail_text.insert('end', "Content:\n", "label")
+            new_detail_text.insert('end', f"{cell_info['calculated_value']}\n", "value")
+        
+        print(f"Successfully read cell {sheet_name}!{cell_address} using openpyxl (Read Only mode)")
+        
+    except Exception as e:
+        messagebox.showerror("Read Only Error", f"Could not read reference using openpyxl.\nError: {e}")
+        print(f"Read Only Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+def explode_dependencies_popup(controller, workbook_path, sheet_name, cell_address, reference_display):
+    """
+    彈出視窗顯示公式依賴關係爆炸圖
+    """
+    try:
+        from utils.dependency_exploder import explode_cell_dependencies
+        import tkinter as tk
+        from tkinter import ttk, messagebox
+        
+        # 檢查檔案是否存在
+        if not os.path.exists(workbook_path):
+            messagebox.showerror("File Not Found", f"Referenced file not found:\n{workbook_path}")
+            return
+        
+        # 創建彈出視窗
+        popup = tk.Toplevel()
+        popup.title(f"Dependency Explosion: {reference_display}")
+        popup.geometry("1000x700")
+        popup.resizable(True, True)
+        
+        # 創建主框架
+        main_frame = ttk.Frame(popup)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # 頂部信息框架
+        info_frame = ttk.LabelFrame(main_frame, text="Analysis Info", padding=5)
+        info_frame.pack(fill='x', pady=(0, 10))
+        
+        # 分析按鈕和進度
+        control_frame = ttk.Frame(info_frame)
+        control_frame.pack(fill='x')
+        
+        analyze_btn = ttk.Button(control_frame, text="Start Analysis", command=lambda: start_analysis())
+        analyze_btn.pack(side=tk.LEFT, padx=5)
+        
+        progress_var = tk.StringVar(value="Ready to analyze...")
+        progress_label = ttk.Label(control_frame, textvariable=progress_var)
+        progress_label.pack(side=tk.LEFT, padx=10)
+        
+        # 樹狀視圖框架
+        tree_frame = ttk.LabelFrame(main_frame, text="Dependency Tree", padding=5)
+        tree_frame.pack(fill='both', expand=True)
+        
+        # 創建 Treeview
+        tree_scroll = ttk.Scrollbar(tree_frame)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        dependency_tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set)
+        dependency_tree.pack(fill='both', expand=True)
+        tree_scroll.config(command=dependency_tree.yview)
+        
+        # 設置列
+        dependency_tree['columns'] = ('formula', 'value', 'type', 'depth')
+        dependency_tree.column('#0', width=300, minwidth=200)
+        dependency_tree.column('formula', width=400, minwidth=200)
+        dependency_tree.column('value', width=150, minwidth=100)
+        dependency_tree.column('type', width=100, minwidth=80)
+        dependency_tree.column('depth', width=80, minwidth=60)
+        
+        # 設置標題
+        dependency_tree.heading('#0', text='Cell Address', anchor=tk.W)
+        dependency_tree.heading('formula', text='Formula', anchor=tk.W)
+        dependency_tree.heading('value', text='Value', anchor=tk.W)
+        dependency_tree.heading('type', text='Type', anchor=tk.W)
+        dependency_tree.heading('depth', text='Depth', anchor=tk.W)
+        
+        # 底部摘要框架
+        summary_frame = ttk.LabelFrame(main_frame, text="Analysis Summary", padding=5)
+        summary_frame.pack(fill='x', pady=(10, 0))
+        
+        summary_text = tk.Text(summary_frame, height=4, wrap=tk.WORD)
+        summary_text.pack(fill='x')
+        
+        def start_analysis():
+            """開始依賴關係分析"""
+            try:
+                analyze_btn.config(state='disabled')
+                progress_var.set("Analyzing dependencies...")
+                popup.update()
+                
+                # 清空樹狀視圖
+                for item in dependency_tree.get_children():
+                    dependency_tree.delete(item)
+                
+                # 執行爆炸分析
+                dependency_tree_data, summary = explode_cell_dependencies(
+                    workbook_path, sheet_name, cell_address, max_depth=8
+                )
+                
+                # 填充樹狀視圖
+                populate_tree(dependency_tree_data)
+                
+                # 顯示摘要
+                show_summary(summary)
+                
+                progress_var.set(f"Analysis complete! Found {summary['total_nodes']} nodes, max depth: {summary['max_depth']}")
+                
+            except Exception as e:
+                messagebox.showerror("Analysis Error", f"Could not analyze dependencies:\n{str(e)}")
+                progress_var.set(f"Analysis failed: {str(e)}")
+            finally:
+                analyze_btn.config(state='normal')
+        
+        def populate_tree(node, parent=''):
+            """遞歸填充樹狀視圖"""
+            try:
+                # 準備顯示數據
+                address = node.get('address', 'Unknown')
+                formula = node.get('formula', '')
+                if formula and len(formula) > 50:
+                    formula = formula[:47] + "..."
+                
+                value = str(node.get('value', ''))
+                if len(value) > 20:
+                    value = value[:17] + "..."
+                
+                node_type = node.get('type', 'unknown')
+                depth = node.get('depth', 0)
+                
+                # 根據類型設置圖標
+                if node_type == 'formula':
+                    icon = "📊"
+                elif node_type == 'value':
+                    icon = "🔢"
+                elif node_type == 'error':
+                    icon = "❌"
+                elif node_type == 'circular_ref':
+                    icon = "🔄"
+                else:
+                    icon = "📋"
+                
+                # 插入節點
+                item_id = dependency_tree.insert(
+                    parent, 'end',
+                    text=f"{icon} {address}",
+                    values=(formula, value, node_type, depth)
+                )
+                
+                # 遞歸添加子節點
+                for child in node.get('children', []):
+                    populate_tree(child, item_id)
+                
+                # 展開前幾層
+                if depth < 3:
+                    dependency_tree.item(item_id, open=True)
+                    
+            except Exception as e:
+                print(f"Error populating tree node: {e}")
+        
+        def show_summary(summary):
+            """顯示分析摘要"""
+            summary_text.delete(1.0, tk.END)
+            
+            summary_content = f"""Total Nodes: {summary['total_nodes']}
+Maximum Depth: {summary['max_depth']}
+Circular References: {summary['circular_references']}
+
+Node Type Distribution:
+"""
+            for node_type, count in summary['type_distribution'].items():
+                summary_content += f"  {node_type}: {count}\n"
+            
+            if summary['circular_ref_list']:
+                summary_content += f"\nCircular References Found:\n"
+                for ref in summary['circular_ref_list']:
+                    summary_content += f"  {ref}\n"
+            
+            summary_text.insert(1.0, summary_content)
+        
+        # 雙擊事件：Go to Reference
+        def on_tree_double_click(event):
+            """樹狀視圖雙擊事件"""
+            item = dependency_tree.selection()[0]
+            item_text = dependency_tree.item(item, "text")
+            
+            # 提取地址信息（移除圖標）
+            address_part = item_text.split(" ", 1)[1] if " " in item_text else item_text
+            
+            if "!" in address_part:
+                try:
+                    sheet_part, cell_part = address_part.split("!", 1)
+                    go_to_reference_new_tab(controller, workbook_path, sheet_part, cell_part, address_part)
+                except Exception as e:
+                    messagebox.showerror("Navigation Error", f"Could not navigate to {address_part}:\n{str(e)}")
+        
+        dependency_tree.bind("<Double-1>", on_tree_double_click)
+        
+        # 右鍵菜單
+        def show_context_menu(event):
+            """顯示右鍵菜單"""
+            try:
+                item = dependency_tree.identify_row(event.y)
+                if item:
+                    dependency_tree.selection_set(item)
+                    
+                    context_menu = tk.Menu(popup, tearoff=0)
+                    context_menu.add_command(label="Go to Reference", command=lambda: on_tree_double_click(None))
+                    context_menu.add_command(label="Copy Address", command=lambda: copy_address(item))
+                    context_menu.add_separator()
+                    context_menu.add_command(label="Expand All", command=lambda: expand_all(item))
+                    context_menu.add_command(label="Collapse All", command=lambda: collapse_all(item))
+                    
+                    context_menu.post(event.x_root, event.y_root)
+            except Exception as e:
+                print(f"Context menu error: {e}")
+        
+        def copy_address(item):
+            """複製地址到剪貼板"""
+            item_text = dependency_tree.item(item, "text")
+            address_part = item_text.split(" ", 1)[1] if " " in item_text else item_text
+            popup.clipboard_clear()
+            popup.clipboard_append(address_part)
+        
+        def expand_all(item):
+            """展開所有子節點"""
+            dependency_tree.item(item, open=True)
+            for child in dependency_tree.get_children(item):
+                expand_all(child)
+        
+        def collapse_all(item):
+            """收縮所有子節點"""
+            dependency_tree.item(item, open=False)
+            for child in dependency_tree.get_children(item):
+                collapse_all(child)
+        
+        dependency_tree.bind("<Button-3>", show_context_menu)
+        
+        # 自動開始分析
+        popup.after(100, start_analysis)
+        
+        print(f"Opened dependency explosion popup for {reference_display}")
+        
+    except Exception as e:
+        messagebox.showerror("Explosion Error", f"Could not create dependency explosion view:\nError: {e}")
+        print(f"Explosion Error: {e}")
+        import traceback
+        traceback.print_exc()

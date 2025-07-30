@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from worksheet_tree import go_to_reference_enhanced
 """
 Inspect Mode UI Module
 
@@ -207,10 +206,6 @@ class SimplifiedWorksheetController(WorksheetController):
                     messagebox.showerror("Excel Error", "No active workbook or worksheet found.")
                     return
                 
-                # Store connection state for Go to Reference functionality
-                self.last_workbook_path = self.workbook.FullName
-                self.last_worksheet_name = self.worksheet.Name
-                
                 # Update UI labels
                 self.view.file_label.config(text=self.workbook.Name, foreground="black")
                 self.view.path_label.config(text=self.workbook.Path, foreground="black")
@@ -224,56 +219,54 @@ class SimplifiedWorksheetController(WorksheetController):
             try:
                 selected_range = self.xl.Selection
                 if selected_range:
-                    # Use EXACTLY the same logic as Normal Mode's scan_worksheet_selected
-                    selected_address = selected_range.Address.replace('$', '')
-                    cell_count = selected_range.Count
+                    # Get the address of the selected cell/range
+                    selected_address = selected_range.Address
                     
-                    original_selected_address = selected_address
-                    original_cell_count = cell_count
+                    # For Inspect Mode, we focus on single cells
+                    # If a range is selected, use the first cell
+                    if ':' in selected_address:
+                        # Take only the first cell from the range
+                        first_cell = selected_address.split(':')[0]
+                        selected_address = first_cell
                     
-                    # Apply the same single cell expansion logic as Normal Mode
-                    if cell_count == 1:
-                        try:
-                            import re
-                            match = re.match(r'([A-Z]+)(\d+)', selected_address)
-                            if match:
-                                col_letters = match.group(1)
-                                row_num = int(match.group(2))
-                                expanded_address = f"{col_letters}{row_num}:{col_letters}{row_num + 1}"
-                                selected_address = expanded_address
-                                cell_count = 2
-                        except Exception as e:
-                            pass
+                    # Remove $ signs for cleaner display
+                    clean_address = selected_address.replace('$', '')
                     
-                    # Set up scanning parameters EXACTLY like Normal Mode
+                    # Set up for selected range scanning (reuse existing functionality)
                     self.selected_scan_address = selected_address
-                    self.selected_scan_count = cell_count
-                    self.original_user_selection = original_selected_address
-                    self.original_user_count = original_cell_count
+                    self.selected_scan_count = 1
                     self.scanning_selected_range = True
+                    self.original_user_selection = selected_address
+                    self.original_user_count = 1
                     
-                    # Update UI display
-                    cell_word = "cell" if original_cell_count == 1 else "cells"
-                    self.view.range_label.config(text=f"Selected Cell ({original_selected_address}) ({original_cell_count} {cell_word})", foreground="black")
+                    # Update range label
+                    self.view.range_label.config(text=f"Selected Cell ({clean_address})", foreground="black")
                     
-                    # Add the same small delay as Normal Mode
-                    import time
-                    time.sleep(0.1)
+                    # Use the same logic as the "Selected Range" button in Normal Mode
+                    # Found that "Selected Range" button uses command=self.scan_worksheet_selected
                     
-                    # Use the same refresh_data call with the same mode as Normal Mode
-                    from core.excel_scanner import refresh_data
+                    # Set up selected range scanning parameters
+                    self.selected_scan_address = selected_address
+                    self.selected_scan_count = 1
+                    self.scanning_selected_range = True
+                    self.original_user_selection = selected_address
+                    self.original_user_count = 1
                     
-                    # Create a temporary button reference (same as Normal Mode)
+                    # Update range label to show what we're scanning
+                    self.view.range_label.config(text=f"Selected Cell ({clean_address})", foreground="black")
+                    
+                    # Call the same function that "Selected Range" button uses
+                    # But we need to call refresh_data directly since scan_worksheet_selected is a class method
+                    from formula_comparator import refresh_data
+                    
+                    # Create a temporary button reference for the refresh_data function
                     temp_button = ttk.Button(self.view, text="Scanning...")
                     temp_button.pack_forget()  # Hide it immediately
                     
-                    # Call refresh_data with "quick" mode (same default as Normal Mode)
-                    refresh_data(self, temp_button, scan_mode="quick")
+                    # Call refresh_data with selected mode (same as scan_worksheet_selected does)
+                    refresh_data(self, temp_button, scan_mode="selected")
                     
-                    print(f"Scanned selected cell {original_selected_address} in {self.pane_name}")
-                    
-                    # Auto-select the first result to show details in main tab (Inspect Mode feature)
-                    self.view.after(100, self.auto_select_first_result)
+                    print(f"Scanned selected cell {clean_address} in {self.pane_name}")
                     
                 else:
                     messagebox.showwarning("No Selection", "Please select a cell in Excel first.")
@@ -284,38 +277,6 @@ class SimplifiedWorksheetController(WorksheetController):
         except Exception as e:
             from tkinter import messagebox
             messagebox.showerror("Connection Error", f"Could not connect to Excel: {e}")
-    
-    def auto_select_first_result(self):
-        """Auto-select the first result in the tree to show details in main tab"""
-        try:
-            if hasattr(self.view, 'result_tree') and self.view.result_tree:
-                # Get all items in the tree
-                items = self.view.result_tree.get_children()
-                if items:
-                    # Select the first item
-                    first_item = items[0]
-                    self.view.result_tree.selection_set(first_item)
-                    self.view.result_tree.focus(first_item)
-                    
-                    # Trigger the selection event to show details
-                    # This will call the on_select function from worksheet_tree.py
-                    # which now includes our optimized Go to Reference functionality
-                    from worksheet_tree import on_select
-                    
-                    # Create a mock event object
-                    class MockEvent:
-                        pass
-                    
-                    mock_event = MockEvent()
-                    on_select(self, mock_event)
-                    
-                    print(f"Auto-selected first result in {self.pane_name}")
-                else:
-                    print(f"No results to auto-select in {self.pane_name}")
-            else:
-                print(f"No result tree found in {self.pane_name}")
-        except Exception as e:
-            print(f"Warning: Could not auto-select first result in {self.pane_name}: {e}")
     
     def close_all_tabs(self):
         """Close all tabs except the main tab (same as Normal Mode)"""
