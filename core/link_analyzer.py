@@ -95,8 +95,10 @@ def get_referenced_cell_values(
     ]
 
     all_matches = []
+    # Normalize backslashes to handle cases with single or double backslashes
+    normalized_formula_str = formula_str.replace('\\\\', '\\')
     for p_type, pattern in patterns:
-        for match in pattern.finditer(formula_str):
+        for match in pattern.finditer(normalized_formula_str):
             all_matches.append({'type': p_type, 'match': match, 'span': match.span()})
 
     all_matches.sort(key=lambda x: (x['span'][0], x['span'][1] - x['span'][0]))

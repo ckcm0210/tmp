@@ -4,6 +4,7 @@ Dependency Exploder - 公式依賴鏈遞歸分析器
 """
 
 import re
+import os
 from utils.openpyxl_resolver import read_cell_with_resolved_references
 
 class DependencyExploder:
@@ -14,7 +15,7 @@ class DependencyExploder:
         self.visited_cells = set()
         self.circular_refs = []
     
-    def explode_dependencies(self, workbook_path, sheet_name, cell_address, current_depth=0):
+    def explode_dependencies(self, workbook_path, sheet_name, cell_address, current_depth=0, root_workbook_path=None):
         """
         遞歸展開公式依賴鏈
         
@@ -32,8 +33,18 @@ class DependencyExploder:
         
         # 檢查遞歸深度限制
         if current_depth >= self.max_depth:
+            # 決定顯示格式
+            current_workbook_path = root_workbook_path if root_workbook_path else workbook_path
+            if os.path.normpath(current_workbook_path) != os.path.normpath(workbook_path):
+                filename = os.path.basename(workbook_path)
+                if filename.endswith('.xlsx') or filename.endswith('.xls') or filename.endswith('.xlsm'):
+                    filename = filename.rsplit('.', 1)[0]
+                display_address = f"[{filename}]{sheet_name}!{cell_address}"
+            else:
+                display_address = f"{sheet_name}!{cell_address}"
+            
             return {
-                'address': f"{sheet_name}!{cell_address}",
+                'address': display_address,
                 'workbook_path': workbook_path,
                 'sheet_name': sheet_name,
                 'cell_address': cell_address,
@@ -48,8 +59,18 @@ class DependencyExploder:
         # 檢查循環引用
         if cell_id in self.visited_cells:
             self.circular_refs.append(cell_id)
+            # 決定顯示格式
+            current_workbook_path = root_workbook_path if root_workbook_path else workbook_path
+            if os.path.normpath(current_workbook_path) != os.path.normpath(workbook_path):
+                filename = os.path.basename(workbook_path)
+                if filename.endswith('.xlsx') or filename.endswith('.xls') or filename.endswith('.xlsm'):
+                    filename = filename.rsplit('.', 1)[0]
+                display_address = f"[{filename}]{sheet_name}!{cell_address}"
+            else:
+                display_address = f"{sheet_name}!{cell_address}"
+            
             return {
-                'address': f"{sheet_name}!{cell_address}",
+                'address': display_address,
                 'workbook_path': workbook_path,
                 'sheet_name': sheet_name,
                 'cell_address': cell_address,
@@ -69,8 +90,18 @@ class DependencyExploder:
             cell_info = read_cell_with_resolved_references(workbook_path, sheet_name, cell_address)
             
             if 'error' in cell_info:
+                # 決定顯示格式
+                current_workbook_path = root_workbook_path if root_workbook_path else workbook_path
+                if os.path.normpath(current_workbook_path) != os.path.normpath(workbook_path):
+                    filename = os.path.basename(workbook_path)
+                    if filename.endswith('.xlsx') or filename.endswith('.xls') or filename.endswith('.xlsm'):
+                        filename = filename.rsplit('.', 1)[0]
+                    display_address = f"[{filename}]{sheet_name}!{cell_address}"
+                else:
+                    display_address = f"{sheet_name}!{cell_address}"
+                
                 return {
-                    'address': f"{sheet_name}!{cell_address}",
+                    'address': display_address,
                     'workbook_path': workbook_path,
                     'sheet_name': sheet_name,
                     'cell_address': cell_address,
@@ -83,14 +114,31 @@ class DependencyExploder:
                 }
             
             # 基本節點信息
+            original_formula = cell_info.get('formula')
+            # 針對性修復雙反斜線問題
+            fixed_formula = original_formula.replace('\\\\', '\\') if original_formula else None
+
+            # 決定顯示格式：外部引用顯示為 [filename]sheet!cell，本地引用顯示為 sheet!cell
+            # 使用 root_workbook_path 來判斷是否為外部引用
+            current_workbook_path = root_workbook_path if root_workbook_path else workbook_path
+            if os.path.normpath(current_workbook_path) != os.path.normpath(workbook_path):
+                # 外部引用：顯示 [filename]sheet!cell 格式
+                filename = os.path.basename(workbook_path)
+                if filename.endswith('.xlsx') or filename.endswith('.xls') or filename.endswith('.xlsm'):
+                    filename = filename.rsplit('.', 1)[0]  # 移除副檔名
+                display_address = f"[{filename}]{sheet_name}!{cell_address}"
+            else:
+                # 本地引用：顯示 sheet!cell 格式
+                display_address = f"{sheet_name}!{cell_address}"
+
             node = {
-                'address': f"{sheet_name}!{cell_address}",
+                'address': display_address,
                 'workbook_path': workbook_path,
                 'sheet_name': sheet_name,
                 'cell_address': cell_address,
                 'value': cell_info.get('display_value', 'N/A'),
                 'calculated_value': cell_info.get('calculated_value', 'N/A'),
-                'formula': cell_info.get('formula'),
+                'formula': fixed_formula,
                 'type': cell_info.get('cell_type', 'unknown'),
                 'children': [],
                 'depth': current_depth,
@@ -108,13 +156,24 @@ class DependencyExploder:
                             ref['workbook_path'],
                             ref['sheet_name'],
                             ref['cell_address'],
-                            current_depth + 1
+                            current_depth + 1,
+                            root_workbook_path or workbook_path
                         )
                         node['children'].append(child_node)
                     except Exception as e:
                         # 添加錯誤節點
+                        # 決定顯示格式
+                        current_workbook_path = root_workbook_path if root_workbook_path else workbook_path
+                        if os.path.normpath(current_workbook_path) != os.path.normpath(ref['workbook_path']):
+                            filename = os.path.basename(ref['workbook_path'])
+                            if filename.endswith('.xlsx') or filename.endswith('.xls') or filename.endswith('.xlsm'):
+                                filename = filename.rsplit('.', 1)[0]
+                            error_display_address = f"[{filename}]{ref['sheet_name']}!{ref['cell_address']}"
+                        else:
+                            error_display_address = f"{ref['sheet_name']}!{ref['cell_address']}"
+                        
                         error_node = {
-                            'address': f"{ref['sheet_name']}!{ref['cell_address']}",
+                            'address': error_display_address,
                             'workbook_path': ref['workbook_path'],
                             'sheet_name': ref['sheet_name'],
                             'cell_address': ref['cell_address'],
@@ -136,8 +195,18 @@ class DependencyExploder:
             # 移除已訪問標記
             self.visited_cells.discard(cell_id)
             
+            # 決定顯示格式
+            current_workbook_path = root_workbook_path if root_workbook_path else workbook_path
+            if os.path.normpath(current_workbook_path) != os.path.normpath(workbook_path):
+                filename = os.path.basename(workbook_path)
+                if filename.endswith('.xlsx') or filename.endswith('.xls') or filename.endswith('.xlsm'):
+                    filename = filename.rsplit('.', 1)[0]
+                display_address = f"[{filename}]{sheet_name}!{cell_address}"
+            else:
+                display_address = f"{sheet_name}!{cell_address}"
+            
             return {
-                'address': f"{sheet_name}!{cell_address}",
+                'address': display_address,
                 'workbook_path': workbook_path,
                 'sheet_name': sheet_name,
                 'cell_address': cell_address,
@@ -170,9 +239,15 @@ class DependencyExploder:
         formula_content = formula[1:]
         
         try:
+            # 預處理：標準化公式中的路徑，將雙反斜線轉為單反斜線
+            normalized_formula = self._normalize_formula_paths(formula)
+            
             # 1. 解析外部引用 (例如: 'C:\path\[file.xlsx]Sheet'!$A$1)
             external_pattern = r"'([^']*\[[^\]]+\][^']*)'!\$?([A-Z]+)\$?(\d+)"
-            external_matches = re.findall(external_pattern, formula)
+            external_matches = re.findall(external_pattern, normalized_formula)
+            
+            # 創建一個副本來移除已處理的外部引用
+            remaining_formula = normalized_formula
             
             for match in external_matches:
                 full_ref, col, row = match
@@ -181,7 +256,10 @@ class DependencyExploder:
                     file_part = full_ref.split('[')[1].split(']')[0]
                     sheet_part = full_ref.split(']')[1] if ']' in full_ref else 'Sheet1'
                     
-                    workbook_path = path_part + file_part
+                    # 修復路徑中的雙反斜線問題 - 使用更直接的方法
+                    # 直接組合路徑，然後用 normpath 處理所有斜線問題
+                    raw_path = path_part + file_part
+                    workbook_path = os.path.normpath(raw_path)
                     sheet_name = sheet_part
                     cell_address = f"{col}{row}"
                     
@@ -191,35 +269,44 @@ class DependencyExploder:
                         'cell_address': cell_address,
                         'type': 'external'
                     })
+                    
+                    # 從剩餘公式中移除這個外部引用，避免路徑被誤認為 cell address
+                    external_ref_full = f"'{full_ref}'!${col}${row}"
+                    remaining_formula = remaining_formula.replace(external_ref_full, "")
+                    # 也處理沒有 $ 符號的情況
+                    external_ref_no_dollar = f"'{full_ref}'!{col}{row}"
+                    remaining_formula = remaining_formula.replace(external_ref_no_dollar, "")
             
             # 2. 解析本地絕對引用 (例如: Sheet1!A1, 工作表1!A1)
+            # 使用移除外部引用後的公式
+            normalized_content = remaining_formula[1:] if remaining_formula.startswith('=') else remaining_formula
             # 找到所有 ! 的位置
-            exclamation_positions = [i for i, char in enumerate(formula_content) if char == '!']
+            exclamation_positions = [i for i, char in enumerate(normalized_content) if char == '!']
             
             for pos in exclamation_positions:
                 # 向前找工作表名稱
                 start = pos - 1
                 
                 # 檢查是否以單引號結尾
-                if start >= 0 and formula_content[start] == "'":
+                if start >= 0 and normalized_content[start] == "'":
                     # 向前找到開始的單引號
                     quote_start = start - 1
-                    while quote_start >= 0 and formula_content[quote_start] != "'":
+                    while quote_start >= 0 and normalized_content[quote_start] != "'":
                         quote_start -= 1
                     
                     if quote_start >= 0:
-                        sheet_name = formula_content[quote_start + 1:start]
+                        sheet_name = normalized_content[quote_start + 1:start]
                     else:
                         continue
                 else:
                     # 沒有單引號，向前找到邊界
-                    while start >= 0 and formula_content[start] not in "+'*/-()=,":
+                    while start >= 0 and normalized_content[start] not in "+'*/-()=,":
                         start -= 1
                     start += 1
-                    sheet_name = formula_content[start:pos]
+                    sheet_name = normalized_content[start:pos]
                 
                 # 向後找 cell 地址
-                remaining = formula_content[pos + 1:]
+                remaining = normalized_content[pos + 1:]
                 cell_match = re.match(r'\$?([A-Z]+)\$?(\d+)', remaining)
                 
                 if cell_match and sheet_name and '[' not in sheet_name and ']' not in sheet_name:
@@ -234,8 +321,9 @@ class DependencyExploder:
                     })
             
             # 3. 解析相對引用 (例如: A1, B5)
+            # 使用移除外部引用後的公式
             relative_pattern = r"(?<![A-Za-z0-9_!'])([A-Z]+)(\d+)(?![A-Za-z0-9_])"
-            relative_matches = re.findall(relative_pattern, formula_content)
+            relative_matches = re.findall(relative_pattern, normalized_content)
             
             # 獲取已存在的絕對引用，避免重複
             existing_refs = set()
@@ -258,6 +346,36 @@ class DependencyExploder:
             print(f"Warning: Error parsing formula references: {e}")
         
         return references
+    
+    def _normalize_formula_paths(self, formula):
+        """
+        標準化公式中的路徑，將雙反斜線轉為單反斜線
+        
+        Args:
+            formula: 原始公式字符串
+            
+        Returns:
+            str: 標準化後的公式字符串
+        """
+        if not formula:
+            return formula
+        
+        # 使用正則表達式找到所有外部引用路徑並標準化
+        def normalize_path_match(match):
+            full_match = match.group(0)
+            path_part = match.group(1)
+            
+            # 標準化路徑部分
+            normalized_path = os.path.normpath(path_part)
+            
+            # 重建完整的引用
+            return full_match.replace(path_part, normalized_path)
+        
+        # 匹配外部引用中的路徑部分
+        external_ref_pattern = r"'([^']*\[[^\]]+\][^']*)'!"
+        normalized_formula = re.sub(external_ref_pattern, normalize_path_match, formula)
+        
+        return normalized_formula
     
     def get_explosion_summary(self, root_node):
         """

@@ -493,8 +493,28 @@ def on_select(controller, event):
         try:
             # 解析外部引用 (例如: ='C:\path\[file.xlsx]Sheet'!$A$1)
             import re
+            
+            # 預處理：標準化公式中的路徑，將雙反斜線轉為單反斜線
+            def normalize_formula_paths(formula):
+                if not formula:
+                    return formula
+                
+                def normalize_path_match(match):
+                    full_match = match.group(0)
+                    path_part = match.group(1)
+                    normalized_path = os.path.normpath(path_part)
+                    return full_match.replace(path_part, normalized_path)
+                
+                external_ref_pattern = r"'([^']*\[[^\]]+\][^']*)'!"
+                return re.sub(external_ref_pattern, normalize_path_match, formula)
+            
+            normalized_formula = normalize_formula_paths(formula)
+            
             external_pattern = r"'([^']*\[[^\]]+\][^']*)'!\$?([A-Z]+)\$?(\d+)"
-            external_matches = re.findall(external_pattern, formula)
+            external_matches = re.findall(external_pattern, normalized_formula)
+            
+            # 創建一個副本來移除已處理的外部引用
+            remaining_formula = normalized_formula
             
             for match in external_matches:
                 full_ref, col, row = match
@@ -504,7 +524,10 @@ def on_select(controller, event):
                     file_part = full_ref.split('[')[1].split(']')[0]
                     sheet_part = full_ref.split(']')[1] if ']' in full_ref else 'Sheet1'
                     
-                    workbook_path = path_part + file_part
+                    # 修復路徑中的雙反斜線問題 - 使用更直接的方法
+                    # 直接組合路徑，然後用 normpath 處理所有斜線問題
+                    raw_path = path_part + file_part
+                    workbook_path = os.path.normpath(raw_path)
                     sheet_name = sheet_part
                     cell_address = f"{col}{row}"
                     
@@ -515,11 +538,19 @@ def on_select(controller, event):
                         'cell_address': cell_address,
                         'value': 'N/A (Excel not connected)' if not excel_connected else None
                     })
+                    
+                    # 從剩餘公式中移除這個外部引用，避免路徑被誤認為 cell address
+                    external_ref_full = f"'{full_ref}'!${col}${row}"
+                    remaining_formula = remaining_formula.replace(external_ref_full, "")
+                    # 也處理沒有 $ 符號的情況
+                    external_ref_no_dollar = f"'{full_ref}'!{col}{row}"
+                    remaining_formula = remaining_formula.replace(external_ref_no_dollar, "")
             
             # 解析本地引用 (例如: Sheet1!A1, 工作表1!A1)
             # 修復：支援中文工作表名稱，但排除公式開頭的 = 號
+            # 使用移除外部引用後的公式
             local_pattern = r"(?<!=)([^'!\[\]=]+)!\$?([A-Z]+)\$?(\d+)"
-            local_matches = re.findall(local_pattern, formula)
+            local_matches = re.findall(local_pattern, remaining_formula)
             
             for match in local_matches:
                 sheet, col, row = match
@@ -937,9 +968,29 @@ def read_reference_openpyxl(controller, workbook_path, sheet_name, cell_address,
                 
                 if resolved_formula and resolved_formula.startswith('='):
                     import re
+                    
+                    # 預處理：標準化公式中的路徑
+                    def normalize_formula_paths_readonly(formula):
+                        if not formula:
+                            return formula
+                        
+                        def normalize_path_match(match):
+                            full_match = match.group(0)
+                            path_part = match.group(1)
+                            normalized_path = os.path.normpath(path_part)
+                            return full_match.replace(path_part, normalized_path)
+                        
+                        external_ref_pattern = r"'([^']*\[[^\]]+\][^']*)'!"
+                        return re.sub(external_ref_pattern, normalize_path_match, formula)
+                    
+                    normalized_resolved_formula = normalize_formula_paths_readonly(resolved_formula)
+                    
                     # Parse external references (e.g., ='C:\path\[file.xlsx]Sheet'!$A$1)
                     external_pattern = r"'([^']*\[[^\]]+\][^']*)'!\$?([A-Z]+)\$?(\d+)"
-                    external_matches = re.findall(external_pattern, resolved_formula)
+                    external_matches = re.findall(external_pattern, normalized_resolved_formula)
+                    
+                    # 創建一個副本來移除已處理的外部引用
+                    remaining_resolved_formula = normalized_resolved_formula
                     
                     for match in external_matches:
                         full_ref, col, row = match
@@ -949,7 +1000,10 @@ def read_reference_openpyxl(controller, workbook_path, sheet_name, cell_address,
                             file_part = full_ref.split('[')[1].split(']')[0]
                             sheet_part = full_ref.split(']')[1] if ']' in full_ref else 'Sheet1'
                             
-                            workbook_path = path_part + file_part
+                            # 修復路徑中的雙反斜線問題 - 使用更直接的方法
+                            # 直接組合路徑，然後用 normpath 處理所有斜線問題
+                            raw_path = path_part + file_part
+                            workbook_path = os.path.normpath(raw_path)
                             sheet_name = sheet_part
                             cell_address = f"{col}{row}"
                             
@@ -980,6 +1034,13 @@ def read_reference_openpyxl(controller, workbook_path, sheet_name, cell_address,
                                 'cell_address': cell_address,
                                 'value': cell_value  # 顯示實際讀取的值
                             })
+                            
+                            # 從剩餘公式中移除這個外部引用，避免路徑被誤認為 cell address
+                            external_ref_full = f"'{full_ref}'!${col}${row}"
+                            remaining_resolved_formula = remaining_resolved_formula.replace(external_ref_full, "")
+                            # 也處理沒有 $ 符號的情況
+                            external_ref_no_dollar = f"'{full_ref}'!{col}{row}"
+                            remaining_resolved_formula = remaining_resolved_formula.replace(external_ref_no_dollar, "")
                     
                     # Parse local references (e.g., Sheet1!A1) - but only if not part of external references
                     # First, get all external reference patterns to exclude them
@@ -992,7 +1053,8 @@ def read_reference_openpyxl(controller, workbook_path, sheet_name, cell_address,
                     
                     # Parse local references using a more robust method
                     # 先移除公式開頭的 = 號，然後尋找所有 worksheet!cell 模式
-                    formula_without_equals = resolved_formula[1:] if resolved_formula.startswith('=') else resolved_formula
+                    # 使用移除外部引用後的公式
+                    formula_without_equals = remaining_resolved_formula[1:] if remaining_resolved_formula.startswith('=') else remaining_resolved_formula
                     
                     # 使用更精確的方法：尋找 ! 符號，然後向前和向後解析
                     import re
@@ -1071,7 +1133,7 @@ def read_reference_openpyxl(controller, workbook_path, sheet_name, cell_address,
                             })
                 
                 # Parse relative references (e.g., A12, B5) - cells without worksheet prefix
-                if resolved_formula and resolved_formula.startswith('='):
+                if normalized_resolved_formula and normalized_resolved_formula.startswith('='):
                     # 解析相對引用：沒有工作表名稱的 cell 引用
                     relative_pattern = r"(?<![A-Za-z0-9_!'])([A-Z]+)(\d+)(?![A-Za-z0-9_])"
                     relative_matches = re.findall(relative_pattern, formula_without_equals)
@@ -1213,6 +1275,42 @@ def explode_dependencies_popup(controller, workbook_path, sheet_name, cell_addre
         progress_label = ttk.Label(control_frame, textvariable=progress_var)
         progress_label.pack(side=tk.LEFT, padx=10)
         
+        # 顯示選項框架
+        options_frame = ttk.LabelFrame(info_frame, text="Display Options", padding=5)
+        options_frame.pack(fill='x', pady=(5, 0))
+        
+        # 顯示選項控制
+        options_control_frame = ttk.Frame(options_frame)
+        options_control_frame.pack(fill='x')
+        
+        # Formula 顯示選項
+        show_full_formula_var = tk.BooleanVar(value=False)
+        show_full_formula_cb = ttk.Checkbutton(
+            options_control_frame, 
+            text="Show Full Formula Paths", 
+            variable=show_full_formula_var,
+            command=lambda: refresh_tree_display()
+        )
+        show_full_formula_cb.pack(side=tk.LEFT, padx=5)
+        
+        # Cell Address 顯示選項
+        show_full_address_var = tk.BooleanVar(value=False)
+        show_full_address_cb = ttk.Checkbutton(
+            options_control_frame, 
+            text="Show Full Cell Address Paths", 
+            variable=show_full_address_var,
+            command=lambda: refresh_tree_display()
+        )
+        show_full_address_cb.pack(side=tk.LEFT, padx=5)
+        
+        # 刷新按鈕
+        refresh_btn = ttk.Button(
+            options_control_frame, 
+            text="Refresh Display", 
+            command=lambda: refresh_tree_display()
+        )
+        refresh_btn.pack(side=tk.RIGHT, padx=5)
+        
         # 樹狀視圖框架
         tree_frame = ttk.LabelFrame(main_frame, text="Dependency Tree", padding=5)
         tree_frame.pack(fill='both', expand=True)
@@ -1263,6 +1361,9 @@ def explode_dependencies_popup(controller, workbook_path, sheet_name, cell_addre
                     workbook_path, sheet_name, cell_address, max_depth=8
                 )
                 
+                # 儲存樹狀數據供刷新使用
+                refresh_tree_display.tree_data = dependency_tree_data
+                
                 # 填充樹狀視圖
                 populate_tree(dependency_tree_data)
                 
@@ -1277,14 +1378,79 @@ def explode_dependencies_popup(controller, workbook_path, sheet_name, cell_addre
             finally:
                 analyze_btn.config(state='normal')
         
+        def format_formula_display(formula):
+            """根據顯示選項格式化公式"""
+            if not formula:
+                return formula
+            
+            if not show_full_formula_var.get():
+                # 簡化顯示：移除完整路徑，只保留檔案名
+                import re
+                # 匹配外部引用模式並簡化
+                def simplify_external_ref(match):
+                    full_path = match.group(1)
+                    if '[' in full_path and ']' in full_path:
+                        # 提取檔案名部分
+                        file_part = full_path.split('[')[1].split(']')[0]
+                        sheet_part = full_path.split(']')[1] if ']' in full_path else ''
+                        return f"'[{file_part}]{sheet_part}'"
+                    return match.group(0)
+                
+                # 簡化外部引用路徑
+                simplified = re.sub(r"'([^']*\[[^\]]+\][^']*)'", simplify_external_ref, formula)
+                return simplified
+            else:
+                # 完整顯示
+                return formula
+        
+        def format_address_display(address, node):
+            """根據顯示選項格式化地址"""
+            if not show_full_address_var.get():
+                # 簡化顯示：只顯示 [filename]sheet!cell 格式
+                return address
+            else:
+                # 完整顯示：包含完整路徑信息
+                workbook_path = node.get('workbook_path', '')
+                sheet_name = node.get('sheet_name', '')
+                cell_address = node.get('cell_address', '')
+                
+                print(f"Debug address formatting:")
+                print(f"  Original address: {address}")
+                print(f"  Workbook path: {workbook_path}")
+                print(f"  Sheet name: {sheet_name}")
+                print(f"  Cell address: {cell_address}")
+                
+                if workbook_path and sheet_name and cell_address:
+                    # 檢查是否為外部引用
+                    import os
+                    current_workbook = os.path.normpath(workbook_path) if 'workbook_path' in globals() else ''
+                    node_workbook = os.path.normpath(workbook_path)
+                    
+                    if node_workbook != current_workbook:
+                        # 外部引用：顯示完整路徑
+                        full_display = f"{node_workbook} → {sheet_name}!{cell_address}"
+                        print(f"  Full display (external): {full_display}")
+                        return full_display
+                    else:
+                        # 本地引用：顯示工作簿名稱
+                        filename = os.path.basename(workbook_path)
+                        full_display = f"{filename} → {sheet_name}!{cell_address}"
+                        print(f"  Full display (local): {full_display}")
+                        return full_display
+                
+                print(f"  Using original address: {address}")
+                return address
+        
         def populate_tree(node, parent=''):
             """遞歸填充樹狀視圖"""
             try:
                 # 準備顯示數據
-                address = node.get('address', 'Unknown')
-                formula = node.get('formula', '')
-                if formula and len(formula) > 50:
-                    formula = formula[:47] + "..."
+                raw_address = node.get('address', 'Unknown')
+                raw_formula = node.get('formula', '')
+                
+                # 根據顯示選項格式化
+                address = format_address_display(raw_address, node)
+                formula = format_formula_display(raw_formula)
                 
                 value = str(node.get('value', ''))
                 if len(value) > 20:
@@ -1311,6 +1477,32 @@ def explode_dependencies_popup(controller, workbook_path, sheet_name, cell_addre
                     text=f"{icon} {address}",
                     values=(formula, value, node_type, depth)
                 )
+                
+                # 儲存完整的節點詳細信息到 tags 中，供雙擊導航使用
+                node_details = {
+                    'workbook_path': node.get('workbook_path', workbook_path),
+                    'sheet_name': node.get('sheet_name', ''),
+                    'cell_address': node.get('cell_address', ''),
+                    'original_formula': raw_formula,  # 儲存原始完整公式
+                    'calculated_value': node.get('calculated_value', ''),
+                    'display_value': node.get('value', ''),
+                    'node_type': node_type,
+                    'depth': depth,
+                    'address': raw_address,  # 儲存原始地址
+                    'display_formula': formula,  # 儲存格式化後的公式
+                    'display_address': address  # 儲存格式化後的地址
+                }
+                
+                # 將詳細信息序列化並儲存到 tags 中
+                import json
+                try:
+                    details_json = json.dumps(node_details)
+                    dependency_tree.item(item_id, tags=(details_json,))
+                except Exception as e:
+                    print(f"Warning: Could not serialize node details: {e}")
+                    # 如果序列化失敗，至少儲存基本信息
+                    basic_info = f"{node_details['workbook_path']}|{node_details['sheet_name']}|{node_details['cell_address']}"
+                    dependency_tree.item(item_id, tags=(basic_info,))
                 
                 # 遞歸添加子節點
                 for child in node.get('children', []):
@@ -1343,21 +1535,155 @@ Node Type Distribution:
             
             summary_text.insert(1.0, summary_content)
         
+        def refresh_tree_display():
+            """刷新樹狀視圖顯示，應用新的顯示選項"""
+            try:
+                # 保存當前展開狀態
+                expanded_items = []
+                def save_expanded_state(item=''):
+                    children = dependency_tree.get_children(item)
+                    for child in children:
+                        if dependency_tree.item(child, 'open'):
+                            expanded_items.append(child)
+                        save_expanded_state(child)
+                
+                save_expanded_state()
+                
+                # 重新填充樹狀視圖
+                if hasattr(refresh_tree_display, 'tree_data'):
+                    # 清空現有內容
+                    for item in dependency_tree.get_children():
+                        dependency_tree.delete(item)
+                    
+                    # 重新填充
+                    populate_tree(refresh_tree_display.tree_data)
+                    
+                    # 恢復展開狀態（盡可能）
+                    for item_id in expanded_items:
+                        try:
+                            dependency_tree.item(item_id, open=True)
+                        except:
+                            pass  # 如果項目不存在就忽略
+                    
+                    print(f"Tree display refreshed with new options:")
+                    print(f"  Show Full Formula Paths: {show_full_formula_var.get()}")
+                    print(f"  Show Full Address Paths: {show_full_address_var.get()}")
+                else:
+                    print("No tree data available for refresh")
+                    
+            except Exception as e:
+                print(f"Error refreshing tree display: {e}")
+        
         # 雙擊事件：Go to Reference
         def on_tree_double_click(event):
-            """樹狀視圖雙擊事件"""
-            item = dependency_tree.selection()[0]
-            item_text = dependency_tree.item(item, "text")
-            
-            # 提取地址信息（移除圖標）
-            address_part = item_text.split(" ", 1)[1] if " " in item_text else item_text
-            
-            if "!" in address_part:
-                try:
-                    sheet_part, cell_part = address_part.split("!", 1)
-                    go_to_reference_new_tab(controller, workbook_path, sheet_part, cell_part, address_part)
-                except Exception as e:
-                    messagebox.showerror("Navigation Error", f"Could not navigate to {address_part}:\n{str(e)}")
+            """樹狀視圖雙擊事件 - 使用儲存的詳細信息進行準確導航"""
+            try:
+                if not dependency_tree.selection():
+                    return
+                    
+                item = dependency_tree.selection()[0]
+                item_text = dependency_tree.item(item, "text")
+                tags = dependency_tree.item(item, "tags")
+                
+                # 提取地址信息（移除圖標）
+                address_part = item_text.split(" ", 1)[1] if " " in item_text else item_text
+                
+                print(f"Double-click on: {address_part}")  # 調試信息
+                
+                # 嘗試從 tags 中獲取詳細信息
+                node_details = None
+                if tags:
+                    import json
+                    try:
+                        # 嘗試解析 JSON 格式的詳細信息
+                        node_details = json.loads(tags[0])
+                        print(f"Loaded node details: {node_details}")
+                    except (json.JSONDecodeError, ValueError):
+                        # 如果不是 JSON，嘗試解析基本格式 "workbook|sheet|cell"
+                        try:
+                            parts = tags[0].split('|')
+                            if len(parts) >= 3:
+                                node_details = {
+                                    'workbook_path': parts[0],
+                                    'sheet_name': parts[1],
+                                    'cell_address': parts[2]
+                                }
+                                print(f"Parsed basic node details: {node_details}")
+                        except Exception as e:
+                            print(f"Could not parse basic node details: {e}")
+                
+                # 使用詳細信息進行導航
+                if node_details and 'workbook_path' in node_details:
+                    target_workbook_path = node_details['workbook_path']
+                    sheet_name = node_details.get('sheet_name', '')
+                    cell_address = node_details.get('cell_address', '')
+                    
+                    print(f"Navigation using stored details:")
+                    print(f"  Workbook: {target_workbook_path}")
+                    print(f"  Sheet: {sheet_name}")
+                    print(f"  Cell: {cell_address}")
+                    
+                    # 檢查檔案是否存在
+                    import os
+                    if not os.path.exists(target_workbook_path):
+                        # 如果檔案不存在，嘗試在當前目錄尋找
+                        filename = os.path.basename(target_workbook_path)
+                        base_dir = os.path.dirname(workbook_path)
+                        alt_path = os.path.join(base_dir, filename)
+                        
+                        if os.path.exists(alt_path):
+                            target_workbook_path = alt_path
+                            print(f"Found alternative path: {target_workbook_path}")
+                        else:
+                            print(f"Warning: File not found: {target_workbook_path}")
+                    
+                    go_to_reference_new_tab(controller, target_workbook_path, sheet_name, cell_address, address_part)
+                    
+                else:
+                    # 回退到原來的解析方法
+                    print("No stored details found, using fallback parsing...")
+                    
+                    if "!" in address_part:
+                        # 解析地址格式：可能是 [filename]sheet!cell 或 sheet!cell
+                        if address_part.startswith('[') and ']' in address_part:
+                            # 外部引用格式：[filename]sheet!cell
+                            bracket_end = address_part.find(']')
+                            filename = address_part[1:bracket_end]  # 提取檔案名
+                            remaining = address_part[bracket_end+1:]  # sheet!cell
+                            
+                            if '!' in remaining:
+                                sheet_part, cell_part = remaining.split('!', 1)
+                                
+                                # 構建完整檔案路徑
+                                import os
+                                base_dir = os.path.dirname(workbook_path)
+                                target_workbook_path = os.path.join(base_dir, filename + '.xlsx')
+                                
+                                # 如果檔案不存在，嘗試其他副檔名
+                                if not os.path.exists(target_workbook_path):
+                                    for ext in ['.xls', '.xlsm']:
+                                        alt_path = os.path.join(base_dir, filename + ext)
+                                        if os.path.exists(alt_path):
+                                            target_workbook_path = alt_path
+                                            break
+                                
+                                print(f"Fallback external reference navigation: {target_workbook_path} -> {sheet_part}!{cell_part}")
+                                go_to_reference_new_tab(controller, target_workbook_path, sheet_part, cell_part, address_part)
+                            else:
+                                messagebox.showwarning("Parse Error", f"Could not parse address: {address_part}")
+                        else:
+                            # 本地引用格式：sheet!cell
+                            sheet_part, cell_part = address_part.split("!", 1)
+                            print(f"Fallback local reference navigation: {workbook_path} -> {sheet_part}!{cell_part}")
+                            go_to_reference_new_tab(controller, workbook_path, sheet_part, cell_part, address_part)
+                    else:
+                        messagebox.showwarning("Parse Error", f"Invalid address format: {address_part}")
+                    
+            except Exception as e:
+                messagebox.showerror("Navigation Error", f"Could not navigate to {address_part}:\n{str(e)}")
+                print(f"Navigation error: {e}")
+                import traceback
+                traceback.print_exc()
         
         dependency_tree.bind("<Double-1>", on_tree_double_click)
         
